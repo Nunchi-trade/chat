@@ -18,6 +18,10 @@ import { createLibp2p } from 'libp2p'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CHAT_TOPIC = 'nunchi-trade.chat.v1'
 const PRESENCE_TOPIC = 'nunchi-trade.chat.presence.v1'
+const DISCOVERY_TOPICS = [
+  '_peer-discovery._p2p._pubsub',
+  'nunchi-trade._peer-discovery._p2p._pubsub'
+]
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 4002)
 const KUBO_PEER_ID =
@@ -68,7 +72,7 @@ await node.start()
 
 console.log('Reserved circuit slot on Kubo via', kuboCircuitListen)
 
-for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC]) {
+for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC, ...DISCOVERY_TOPICS]) {
   await node.services.pubsub.subscribe(topic)
   console.log('subscribed:', topic)
 }
