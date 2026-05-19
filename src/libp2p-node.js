@@ -122,17 +122,38 @@ async function waitForRelayPeer (node, relayPeerId, timeoutMs = 20_000) {
   throw new Error('Timed out waiting for Kubo relay connection')
 }
 
+async function waitForPubsubPeer (pubsub, peerIdStr, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const found = [...pubsub.peers.keys()].some((p) => p.toString() === peerIdStr)
+    if (found) {
+      return
+    }
+    await waitMs(400)
+  }
+  throw new Error('Pubsub stream to peer not ready')
+}
+
+/** Re-announce topic subscriptions to all floodsub peers (e.g. after bridge connects). */
+function resyncPubsubSubscriptions (pubsub) {
+  for (const topic of pubsub.getTopics()) {
+    pubsub.unsubscribe(topic)
+    pubsub.subscribe(topic)
+  }
+}
+
 async function dialPubsubBridge (node) {
   if (!BRIDGE_PEER_ID) {
     return
   }
   bridgeDialError = null
+  const pubsub = node.services.pubsub
 
   const kuboPeerId = RELAY_MULTIADDRS.map(peerIdFromRelayMultiaddr).find(Boolean)
   if (kuboPeerId) {
     try {
       await waitForRelayPeer(node, kuboPeerId)
-      await waitMs(3000)
+      await waitMs(2000)
     } catch (err) {
       bridgeDialError = err instanceof Error ? err.message : String(err)
       return
@@ -144,6 +165,13 @@ async function dialPubsubBridge (node) {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await node.dial(multiaddr(circuitAddr))
+        try {
+          await waitForPubsubPeer(pubsub, BRIDGE_PEER_ID)
+          resyncPubsubSubscriptions(pubsub)
+        } catch (err) {
+          bridgeDialError = err instanceof Error ? err.message : String(err)
+          console.warn('Bridge libp2p connected but floodsub not ready', err)
+        }
         return
       } catch (err) {
         bridgeDialError = err instanceof Error ? err.message : String(err)
@@ -229,6 +257,10 @@ export async function createChatNode (libp2pPrivateKey) {
 
   await node.start()
 
+  for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC, ...DISCOVERY_TOPICS]) {
+    await node.services.pubsub.subscribe(topic)
+  }
+
   for (const addr of RELAY_MULTIADDRS) {
     const peerId = peerIdFromRelayMultiaddr(addr)
     relayDialByAddr.set(addr, { peerId, dialError: null })
@@ -242,9 +274,6 @@ export async function createChatNode (libp2pPrivateKey) {
   }
 
   await dialPubsubBridge(node)
-
-  await node.services.pubsub.subscribe(CHAT_TOPIC)
-  await node.services.pubsub.subscribe(PRESENCE_TOPIC)
 
   setInterval(() => {
     void dialChatSubscribers(node)
@@ -271,12 +300,41 @@ export function stopPresenceLoop () {
   roomMembers.clear()
 }
 
+async function publishWithDiagnostics (node, topic, data) {
+  const pubsub = node.services.pubsub
+  const bytes = fromString(JSON.stringify(data))
+  const result = await pubsub.publish(topic, bytes)
+  if (result.recipients.length === 0) {
+    console.warn(
+      `[nunchi] publish on ${topic} reached 0 floodsub peers`,
+      getPubsubDebug(node)
+    )
+  }
+  return result
+}
+
 export function publishChatMessage (node, data) {
-  return node.services.pubsub.publish(CHAT_TOPIC, fromString(JSON.stringify(data)))
+  return publishWithDiagnostics(node, CHAT_TOPIC, data)
 }
 
 export function publishPresenceMessage (node, data) {
-  return node.services.pubsub.publish(PRESENCE_TOPIC, fromString(JSON.stringify(data)))
+  return publishWithDiagnostics(node, PRESENCE_TOPIC, data)
+}
+
+export function getPubsubDebug (node) {
+  const pubsub = node.services.pubsub
+  const peerStr = (p) => p.toString()
+  return {
+    libp2pPeers: node.getPeers().map(peerStr),
+    floodsubPeers: [...pubsub.peers.keys()].map(peerStr),
+    topics: pubsub.getTopics(),
+    chatSubscribers: pubsub.getSubscribers(CHAT_TOPIC).map(peerStr),
+    presenceSubscribers: pubsub.getSubscribers(PRESENCE_TOPIC).map(peerStr),
+    bridgeConnected: isBridgeConnected(node),
+    bridgeInFloodsub: BRIDGE_PEER_ID
+      ? [...pubsub.peers.keys()].some((p) => p.toString() === BRIDGE_PEER_ID)
+      : false
+  }
 }
 
 export function onPubsubMessage (node, handler) {

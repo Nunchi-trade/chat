@@ -77,10 +77,60 @@ for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC, ...DISCOVERY_TOPICS]) {
   console.log('subscribed:', topic)
 }
 
-node.services.pubsub.addEventListener('message', (evt) => {
-  const topic = evt.detail.topic
-  if (topic === CHAT_TOPIC) {
-    console.log('chat via floodsub from', evt.detail.from?.toString?.() ?? '?')
+const seenPayloads = new Set()
+
+function payloadKey (topic, from, data) {
+  const fromStr = from?.toString?.() ?? '?'
+  const slice = data?.length > 48 ? data.subarray(0, 48) : data
+  return `${topic}:${fromStr}:${Buffer.from(slice ?? []).toString('base64')}`
+}
+
+node.addEventListener('peer:connect', (evt) => {
+  console.log('[bridge] libp2p connect', evt.detail.toString())
+})
+
+node.services.pubsub.addEventListener('subscription-change', (evt) => {
+  const { peerId, subscriptions } = evt.detail
+  console.log(
+    '[bridge] subscription-change',
+    peerId.toString(),
+    subscriptions.map((s) => `${s.subscribe ? '+' : '-'}${s.topic}`).join(', ')
+  )
+})
+
+node.services.pubsub.addEventListener('message', async (evt) => {
+  const { topic, data, from } = evt.detail
+  if (topic !== CHAT_TOPIC && topic !== PRESENCE_TOPIC) {
+    return
+  }
+
+  const fromStr = from?.toString?.() ?? '?'
+  const key = payloadKey(topic, from, data)
+  if (seenPayloads.has(key)) {
+    return
+  }
+  seenPayloads.add(key)
+  if (seenPayloads.size > 5000) {
+    seenPayloads.clear()
+  }
+
+  console.log(`[bridge] ${topic} from ${fromStr} (${data?.length ?? 0} bytes)`)
+
+  const pubsub = node.services.pubsub
+  const subscribers = pubsub.getSubscribers(topic) ?? []
+  const others = subscribers.filter((p) => !p.equals(from))
+  if (others.length === 0) {
+    console.log(`[bridge] no other subscribers on ${topic}`)
+    return
+  }
+
+  try {
+    const result = await pubsub.publish(topic, data)
+    console.log(
+      `[bridge] relayed ${topic} to ${result.recipients.length} peer(s)`
+    )
+  } catch (err) {
+    console.warn(`[bridge] relay failed for ${topic}`, err)
   }
 })
 

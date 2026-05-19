@@ -12,6 +12,7 @@ import {
   createChatNode,
   formatRelayLabel,
   getBridgeStatuses,
+  getPubsubDebug,
   getRoomOccupancy,
   getRelayConfigured,
   getRelayStatuses,
@@ -26,6 +27,20 @@ import {
 } from './libp2p-node.js'
 
 const $ = (id) => document.getElementById(id)
+
+function runNunchiDebug () {
+  if (!node || !identity) {
+    const msg = 'Join the chat room first (enter seed phrase), then run __nunchiChatDebug() again.'
+    console.warn('[nunchi]', msg)
+    return { error: msg }
+  }
+  const debug = getPubsubDebug(node)
+  const room = getRoomOccupancy(identity.peerId.toString())
+  console.log('[nunchi] debug', { ...debug, room })
+  return { ...debug, room }
+}
+
+window.__nunchiChatDebug = runNunchiDebug
 
 const identityScreen = $('identity-screen')
 const chatScreen = $('chat-screen')
