@@ -102,7 +102,7 @@ export async function verifyMessage (envelope) {
   }
 
   try {
-    const publicKey = publicKeyFromRaw('Ed25519', publicKeyBytes)
+    const publicKey = publicKeyFromRaw(publicKeyBytes)
     return publicKey.verify(messageBytes(payload), signature)
   } catch {
     return false

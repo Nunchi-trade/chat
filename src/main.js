@@ -10,8 +10,10 @@ import {
 } from './identity.js'
 import {
   createChatNode,
+  formatRelayLabel,
   getConnectedPeerCount,
   getRelayConfigured,
+  getRelayStatuses,
   onChatMessage,
   publishChatMessage
 } from './libp2p-node.js'
@@ -28,6 +30,7 @@ const messageInput = $('message-input')
 const statusText = $('status-text')
 const peerCount = $('peer-count')
 const displayName = $('display-name')
+const relayList = $('relay-list')
 
 let identity = null
 let node = null
@@ -94,17 +97,67 @@ async function handleIncoming (envelope) {
   appendMessage(envelope, { verified, own })
 }
 
+function updateRelayList () {
+  if (!node || !relayList) {
+    return
+  }
+
+  if (!getRelayConfigured()) {
+    relayList.replaceChildren()
+    const li = document.createElement('li')
+    li.className = 'relay-item warn'
+    li.textContent = 'No relay configured in build'
+    relayList.appendChild(li)
+    return
+  }
+
+  const statuses = getRelayStatuses(node)
+  relayList.replaceChildren(
+    ...statuses.map((status) => {
+      const li = document.createElement('li')
+      let state = 'disconnected'
+      let detail = status.dialError ?? 'Not connected'
+
+      if (status.connected) {
+        state = 'connected'
+        detail = 'Connected'
+      } else if (status.dialError) {
+        state = 'error'
+        detail = status.dialError
+      }
+
+      li.className = `relay-item ${state}`
+      li.title = status.multiaddr
+      li.innerHTML = `
+        <span class="relay-dot" aria-hidden="true"></span>
+        <span class="relay-label">${escapeHtml(formatRelayLabel(status))}</span>
+        <span class="relay-detail">${escapeHtml(detail)}</span>
+      `
+      return li
+    })
+  )
+}
+
 function updateStatus () {
   if (!node) {
     return
   }
+
+  updateRelayList()
+
   const peers = getConnectedPeerCount(node)
+  const relays = getRelayStatuses(node)
+  const anyRelayConnected = relays.some((r) => r.connected)
   const relay = getRelayConfigured()
+
   if (!relay) {
     statusText.textContent = 'No relay configured — deploy relay and rebuild'
     statusText.className = 'status warn'
+  } else if (!anyRelayConnected) {
+    statusText.textContent = 'Relay unreachable — check Kubo / firewall'
+    statusText.className = 'status warn'
   } else if (peers === 0) {
-    statusText.textContent = 'Connected to network — waiting for peers…'
+    statusText.textContent = 'Relay connected — waiting for peers…'
     statusText.className = 'status'
   } else {
     statusText.textContent = 'Connected'
@@ -147,6 +200,9 @@ async function enterChat (mnemonic) {
     void handleIncoming(envelope)
   })
 
+  node.addEventListener('connection:open', updateStatus)
+  node.addEventListener('connection:close', updateStatus)
+
   messageInput.disabled = false
   messageForm.querySelector('button').disabled = false
   messageInput.focus()
@@ -177,6 +233,9 @@ function leaveChat () {
   identity = null
   seenMessageIds.clear()
   messagesEl.replaceChildren()
+  if (relayList) {
+    relayList.replaceChildren()
+  }
   messageInput.disabled = true
   messageForm.querySelector('button').disabled = true
   chatScreen.hidden = true

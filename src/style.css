@@ -165,6 +165,86 @@ button.primary:hover {
   border-radius: 4px;
 }
 
+.relay-panel {
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+}
+
+.relay-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.relay-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.relay-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.relay-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.relay-item.connected .relay-dot {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+.relay-item.disconnected .relay-dot,
+.relay-item.pending .relay-dot {
+  background: var(--muted);
+}
+
+.relay-item.error .relay-dot,
+.relay-item.warn .relay-dot {
+  background: var(--warn);
+}
+
+.relay-label {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.relay-detail {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: right;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relay-item.connected .relay-detail {
+  color: var(--ok);
+}
+
+.relay-item.error .relay-detail {
+  color: var(--warn);
+}
+
 #messages {
   list-style: none;
   margin: 0 0 1rem;
