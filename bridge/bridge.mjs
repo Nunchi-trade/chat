@@ -1,12 +1,12 @@
 /**
- * Gossipsub bridge — browsers reach it via Kubo circuit relay (needs reservation on Kubo).
+ * Floodsub bridge — browsers reach it via Kubo circuit relay (reservation on Kubo).
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
-import { gossipsub } from '@chainsafe/libp2p-gossipsub'
+import { floodsub } from '@libp2p/floodsub'
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
 import { tcp } from '@libp2p/tcp'
@@ -17,15 +17,11 @@ import { createLibp2p } from 'libp2p'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CHAT_TOPIC = 'nunchi-trade.chat.v1'
-const DISCOVERY_TOPICS = [
-  '_peer-discovery._p2p._pubsub',
-  'nunchi-trade._peer-discovery._p2p._pubsub'
-]
+const PRESENCE_TOPIC = 'nunchi-trade.chat.presence.v1'
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 4002)
 const KUBO_PEER_ID =
   process.env.KUBO_PEER_ID ?? '12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS'
-/** Kubo local TCP (plain /ws was removed when AutoTLS enabled). */
 const KUBO_LOCAL_ADDR =
   process.env.KUBO_LOCAL_ADDR ??
   `/ip4/127.0.0.1/tcp/4001/p2p/${KUBO_PEER_ID}`
@@ -45,7 +41,6 @@ const privateKey = await loadOrCreateKey()
 const peerId = await peerIdFromPrivateKey(privateKey)
 writeFileSync(ID_FILE, peerId.toString())
 
-/** Listen here so Kubo records a circuit-relay reservation for this peer. */
 const kuboCircuitListen = `${KUBO_LOCAL_ADDR}/p2p-circuit`
 
 const node = await createLibp2p({
@@ -65,10 +60,7 @@ const node = await createLibp2p({
   streamMuxers: [yamux()],
   services: {
     identify: identify(),
-    pubsub: gossipsub({
-      allowPublishToZeroTopicPeers: true,
-      emitSelf: false
-    })
+    pubsub: floodsub()
   }
 })
 
@@ -76,14 +68,15 @@ await node.start()
 
 console.log('Reserved circuit slot on Kubo via', kuboCircuitListen)
 
-for (const topic of [CHAT_TOPIC, ...DISCOVERY_TOPICS]) {
+for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC]) {
   await node.services.pubsub.subscribe(topic)
   console.log('subscribed:', topic)
 }
 
 node.services.pubsub.addEventListener('message', (evt) => {
-  if (evt.detail.topic === CHAT_TOPIC) {
-    console.log('chat message on mesh from', evt.detail.from?.toString?.() ?? '?')
+  const topic = evt.detail.topic
+  if (topic === CHAT_TOPIC) {
+    console.log('chat via floodsub from', evt.detail.from?.toString?.() ?? '?')
   }
 })
 

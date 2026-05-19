@@ -12,12 +12,17 @@ import {
   createChatNode,
   formatRelayLabel,
   getBridgeStatuses,
-  getChatPeerCount,
+  getRoomOccupancy,
   getRelayConfigured,
   getRelayStatuses,
   isBridgeConnected,
-  onChatMessage,
-  publishChatMessage
+  onPubsubMessage,
+  publishChatMessage,
+  publishPresenceMessage,
+  recordPresence,
+  setOnRoomChange,
+  startPresenceLoop,
+  stopPresenceLoop
 } from './libp2p-node.js'
 
 const $ = (id) => document.getElementById(id)
@@ -33,6 +38,7 @@ const statusText = $('status-text')
 const peerCount = $('peer-count')
 const displayName = $('display-name')
 const relayList = $('relay-list')
+const roomCountEl = $('room-count')
 
 let identity = null
 let node = null
@@ -49,7 +55,7 @@ function formatTime (ts) {
 }
 
 function messageId (envelope) {
-  return `${envelope.peerId}:${envelope.timestamp}:${envelope.signature}`
+  return `${envelope.peerId}:${envelope.timestamp}:${envelope.signature ?? envelope.type}`
 }
 
 function appendMessage (envelope, { verified, own }) {
@@ -87,7 +93,39 @@ function escapeHtml (s) {
   })[c])
 }
 
-async function handleIncoming (envelope) {
+function updateRoomUI () {
+  if (!identity || !roomCountEl) {
+    return
+  }
+  const { count, others } = getRoomOccupancy(identity.peerId.toString())
+  const bridgeOk = node && isBridgeConnected(node)
+
+  if (!bridgeOk) {
+    roomCountEl.textContent = 'Room: waiting for pubsub bridge…'
+    roomCountEl.className = 'room-count warn'
+    return
+  }
+
+  if (count <= 1) {
+    roomCountEl.textContent = 'Room: only you (waiting for others…)'
+    roomCountEl.className = 'room-count warn'
+    return
+  }
+
+  const names = others.map((o) => o.displayName).join(', ')
+  roomCountEl.textContent = `${count} people in room — ${names}`
+  roomCountEl.className = 'room-count'
+}
+
+async function handleIncoming (topic, envelope) {
+  if (envelope.type === 'presence') {
+    const verified = await verifyMessage(envelope)
+    if (verified) {
+      recordPresence(envelope)
+    }
+    return
+  }
+
   const id = messageId(envelope)
   if (seenMessageIds.has(id)) {
     return
@@ -129,7 +167,7 @@ function updateRelayList () {
       }
 
       li.className = `relay-item ${state}`
-      li.title = status.multiaddr
+      li.title = status.multiaddr ?? ''
       li.innerHTML = `
         <span class="relay-dot" aria-hidden="true"></span>
         <span class="relay-label">${escapeHtml(formatRelayLabel(status))}</span>
@@ -146,12 +184,13 @@ function updateStatus () {
   }
 
   updateRelayList()
+  updateRoomUI()
 
-  const chatPeers = getChatPeerCount(node)
   const relays = getRelayStatuses(node)
   const anyRelayConnected = relays.some((r) => r.connected)
   const bridgeOk = isBridgeConnected(node)
   const relay = getRelayConfigured()
+  const room = getRoomOccupancy(identity.peerId.toString())
 
   if (!relay) {
     statusText.textContent = 'No relay configured — deploy relay and rebuild'
@@ -165,17 +204,27 @@ function updateStatus () {
   } else if (!bridgeOk) {
     statusText.textContent = 'Pubsub bridge unreachable — systemctl status chat-bridge'
     statusText.className = 'status warn'
+  } else if (room.count <= 1) {
+    statusText.textContent = 'Chat network ready — waiting for others to join'
+    statusText.className = 'status'
   } else {
     statusText.textContent = 'Chat network ready'
     statusText.className = 'status ok'
   }
 
-  const parts = []
-  if (bridgeOk) parts.push('bridge ok')
-  if (chatPeers > 0) {
-    parts.push(`${chatPeers} direct peer${chatPeers === 1 ? '' : 's'}`)
+  peerCount.textContent = bridgeOk ? `${room.count} in room` : ''
+}
+
+async function publishPresence () {
+  const payload = {
+    type: 'presence',
+    text: '',
+    timestamp: Date.now(),
+    peerId: identity.peerId.toString(),
+    displayName: identity.displayName
   }
-  peerCount.textContent = parts.join(' · ')
+  const signed = await signMessage(identity, payload)
+  await publishPresenceMessage(node, signed)
 }
 
 async function enterChat (mnemonic) {
@@ -197,6 +246,11 @@ async function enterChat (mnemonic) {
   chatScreen.hidden = false
   displayName.textContent = identity.displayName
 
+  setOnRoomChange(() => {
+    updateRoomUI()
+    updateStatus()
+  })
+
   try {
     node = await createChatNode(identity.libp2pPrivateKey)
   } catch (err) {
@@ -208,9 +262,11 @@ async function enterChat (mnemonic) {
     return
   }
 
-  onChatMessage(node, (envelope) => {
-    void handleIncoming(envelope)
+  onPubsubMessage(node, (topic, envelope) => {
+    void handleIncoming(topic, envelope)
   })
+
+  startPresenceLoop(node, publishPresence)
 
   node.addEventListener('connection:open', updateStatus)
   node.addEventListener('connection:close', updateStatus)
@@ -225,6 +281,7 @@ async function enterChat (mnemonic) {
 
 async function sendMessage (text) {
   const payload = {
+    type: 'chat',
     text,
     timestamp: Date.now(),
     peerId: identity.peerId.toString(),
@@ -232,12 +289,14 @@ async function sendMessage (text) {
   }
   const signed = await signMessage(identity, payload)
   await publishChatMessage(node, signed)
-  await handleIncoming(signed)
+  await handleIncoming('chat', signed)
 }
 
 function leaveChat () {
   clearInterval(statusTimer)
   statusTimer = null
+  stopPresenceLoop()
+  setOnRoomChange(null)
   if (node) {
     void node.stop()
     node = null
@@ -247,6 +306,9 @@ function leaveChat () {
   messagesEl.replaceChildren()
   if (relayList) {
     relayList.replaceChildren()
+  }
+  if (roomCountEl) {
+    roomCountEl.textContent = ''
   }
   messageInput.disabled = true
   messageForm.querySelector('button').disabled = true

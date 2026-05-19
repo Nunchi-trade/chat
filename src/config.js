@@ -1,5 +1,11 @@
-/** Shared gossipsub topic — everyone on this topic is in the same room. */
+/** Shared chat topic — everyone subscribed is in the same room. */
 export const CHAT_TOPIC = 'nunchi-trade.chat.v1'
+
+/** Presence heartbeats for room occupancy. */
+export const PRESENCE_TOPIC = 'nunchi-trade.chat.presence.v1'
+
+/** How long since last heartbeat counts someone as "in the room". */
+export const PRESENCE_TTL_MS = 45_000
 
 /** Gossipsub peer-discovery topics (must include global + app-specific). */
 export const DISCOVERY_TOPICS = [

@@ -1,6 +1,6 @@
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
-import { gossipsub } from '@chainsafe/libp2p-gossipsub'
+import { floodsub } from '@libp2p/floodsub'
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
 import { pubsubPeerDiscovery } from '@libp2p/pubsub-peer-discovery'
@@ -13,12 +13,19 @@ import {
   BRIDGE_PEER_ID,
   CHAT_TOPIC,
   DISCOVERY_TOPICS,
+  PRESENCE_TOPIC,
+  PRESENCE_TTL_MS,
   RELAY_MULTIADDRS
 } from './config.js'
 
 /** @type {Map<string, { peerId: string | null, dialError: string | null }>} */
 const relayDialByAddr = new Map()
 let bridgeDialError = null
+
+/** @type {Map<string, { displayName: string, lastSeen: number }>} */
+const roomMembers = new Map()
+let presenceTimer = null
+let onRoomChange = null
 
 function peerIdFromRelayMultiaddr (addr) {
   const match = addr.match(/\/p2p\/([^/]+)$/i)
@@ -39,7 +46,7 @@ function hostFromRelayMultiaddr (addr) {
   return 'relay'
 }
 
-function infrastructurePeerIds () {
+export function infrastructurePeerIds () {
   const ids = new Set(
     RELAY_MULTIADDRS.map(peerIdFromRelayMultiaddr).filter(Boolean)
   )
@@ -47,6 +54,57 @@ function infrastructurePeerIds () {
     ids.add(BRIDGE_PEER_ID)
   }
   return ids
+}
+
+function prunePresence () {
+  const now = Date.now()
+  for (const [id, entry] of roomMembers) {
+    if (now - entry.lastSeen > PRESENCE_TTL_MS) {
+      roomMembers.delete(id)
+    }
+  }
+}
+
+function notifyRoomChange () {
+  if (onRoomChange) {
+    onRoomChange(getRoomOccupancy())
+  }
+}
+
+export function recordPresence (envelope) {
+  if (envelope.type !== 'presence') {
+    return
+  }
+  const infra = infrastructurePeerIds()
+  if (infra.has(envelope.peerId)) {
+    return
+  }
+  roomMembers.set(envelope.peerId, {
+    displayName: envelope.displayName ?? envelope.peerId.slice(0, 8),
+    lastSeen: envelope.timestamp ?? Date.now()
+  })
+  prunePresence()
+  notifyRoomChange()
+}
+
+export function getRoomOccupancy (selfPeerId) {
+  prunePresence()
+  const infra = infrastructurePeerIds()
+  const members = []
+  for (const [peerId, info] of roomMembers) {
+    if (peerId === selfPeerId || infra.has(peerId)) {
+      continue
+    }
+    members.push({ peerId, displayName: info.displayName })
+  }
+  return {
+    count: members.length + 1,
+    others: members
+  }
+}
+
+export function setOnRoomChange (fn) {
+  onRoomChange = fn
 }
 
 async function waitMs (ms) {
@@ -74,7 +132,6 @@ async function dialPubsubBridge (node) {
   if (kuboPeerId) {
     try {
       await waitForRelayPeer(node, kuboPeerId)
-      // Allow browser + bridge circuit reservations to complete on Kubo
       await waitMs(3000)
     } catch (err) {
       bridgeDialError = err instanceof Error ? err.message : String(err)
@@ -129,7 +186,7 @@ async function dialChatSubscribers (node) {
     try {
       await node.dial(peerId)
     } catch {
-      // may need webrtc path via discovery
+      // peer may need circuit/webrtc path
     }
   }
 }
@@ -137,6 +194,7 @@ async function dialChatSubscribers (node) {
 export async function createChatNode (libp2pPrivateKey) {
   relayDialByAddr.clear()
   bridgeDialError = null
+  roomMembers.clear()
 
   const node = await createLibp2p({
     privateKey: libp2pPrivateKey,
@@ -161,9 +219,7 @@ export async function createChatNode (libp2pPrivateKey) {
     ],
     services: {
       identify: identify(),
-      pubsub: gossipsub({
-        allowPublishToZeroTopicPeers: true
-      })
+      pubsub: floodsub()
     }
   })
 
@@ -188,6 +244,7 @@ export async function createChatNode (libp2pPrivateKey) {
   await dialPubsubBridge(node)
 
   await node.services.pubsub.subscribe(CHAT_TOPIC)
+  await node.services.pubsub.subscribe(PRESENCE_TOPIC)
 
   setInterval(() => {
     void dialChatSubscribers(node)
@@ -196,18 +253,41 @@ export async function createChatNode (libp2pPrivateKey) {
   return node
 }
 
+export function startPresenceLoop (node, publishPresence) {
+  stopPresenceLoop()
+  presenceTimer = setInterval(() => {
+    void publishPresence().catch((err) => {
+      console.warn('presence publish failed', err)
+    })
+  }, 4_000)
+  void publishPresence().catch(() => {})
+}
+
+export function stopPresenceLoop () {
+  if (presenceTimer) {
+    clearInterval(presenceTimer)
+    presenceTimer = null
+  }
+  roomMembers.clear()
+}
+
 export function publishChatMessage (node, data) {
   return node.services.pubsub.publish(CHAT_TOPIC, fromString(JSON.stringify(data)))
 }
 
-export function onChatMessage (node, handler) {
+export function publishPresenceMessage (node, data) {
+  return node.services.pubsub.publish(PRESENCE_TOPIC, fromString(JSON.stringify(data)))
+}
+
+export function onPubsubMessage (node, handler) {
   node.services.pubsub.addEventListener('message', (event) => {
-    if (event.detail.topic !== CHAT_TOPIC) {
+    const topic = event.detail.topic
+    if (topic !== CHAT_TOPIC && topic !== PRESENCE_TOPIC) {
       return
     }
     try {
       const data = JSON.parse(toString(event.detail.data))
-      handler(data)
+      handler(topic, data)
     } catch {
       // ignore malformed
     }
@@ -234,7 +314,6 @@ export function getRelayConfigured () {
   return RELAY_MULTIADDRS.length > 0
 }
 
-/** Per-relay dial + live connection state for the UI. */
 export function getRelayStatuses (node) {
   const connectedPeers = new Set(node.getPeers().map((p) => p.toString()))
 

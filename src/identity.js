@@ -58,7 +58,8 @@ export async function identityFromMnemonic (phrase) {
 /** Canonical payload bytes for signing (excludes signature). */
 export function messageBytes (payload) {
   const canonical = {
-    text: payload.text,
+    type: payload.type ?? 'chat',
+    text: payload.text ?? '',
     timestamp: payload.timestamp,
     peerId: payload.peerId,
     displayName: payload.displayName
@@ -95,7 +96,8 @@ export async function verifyMessage (envelope) {
   }
 
   const payload = {
-    text: envelope.text,
+    type: envelope.type ?? 'chat',
+    text: envelope.text ?? '',
     timestamp: envelope.timestamp,
     peerId: envelope.peerId,
     displayName: envelope.displayName

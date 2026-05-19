@@ -165,6 +165,17 @@ button.primary:hover {
   border-radius: 4px;
 }
 
+.room-count {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.room-count.warn {
+  color: var(--warn);
+}
+
 .relay-panel {
   margin: 0 0 1rem;
   padding: 0.75rem 0.85rem;
