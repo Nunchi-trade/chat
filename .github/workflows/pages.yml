@@ -30,6 +30,7 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           VITE_RELAY_MULTIADDR: ${{ vars.VITE_RELAY_MULTIADDR }}
+          VITE_BRIDGE_PEER_ID: ${{ vars.VITE_BRIDGE_PEER_ID }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -26,6 +26,16 @@ sudo ./scripts/install-ipfs-service.sh
 
 Check status: `systemctl status ipfs` · logs: `journalctl -u ipfs -f`
 
+### Pubsub bridge (required for messages)
+
+Kubo relays connections but does **not** forward gossipsub chat topics. A small local bridge keeps the chat mesh alive:
+
+```bash
+sudo ./scripts/install-chat-bridge.sh
+```
+
+Set GitHub variable **`VITE_BRIDGE_PEER_ID`** (printed by the install script), then redeploy Pages.
+
 Copy the **`/tcp/4001/ws/p2p/...`** address from `ipfs id` into `.env`:
 
 ```bash
