@@ -1,12 +1,17 @@
-import * as bip39 from 'bip39'
+import {
+  generateMnemonic,
+  mnemonicToSeedSync,
+  validateMnemonic as validateBip39Mnemonic
+} from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english'
 import { generateKeyPairFromSeed, publicKeyFromRaw } from '@libp2p/crypto/keys'
 import { peerIdFromPrivateKey } from '@libp2p/peer-id'
 import { fromString, toString } from 'uint8arrays'
 
 const MNEMONIC_STORAGE_KEY = 'nunchi-chat-mnemonic'
 
-export function generateMnemonic () {
-  return bip39.generateMnemonic(128)
+export function generateMnemonicPhrase () {
+  return generateMnemonic(wordlist, 128)
 }
 
 export function normalizeMnemonic (phrase) {
@@ -14,7 +19,7 @@ export function normalizeMnemonic (phrase) {
 }
 
 export function validateMnemonic (phrase) {
-  return bip39.validateMnemonic(normalizeMnemonic(phrase))
+  return validateBip39Mnemonic(normalizeMnemonic(phrase), wordlist)
 }
 
 export function loadStoredMnemonic () {
@@ -32,11 +37,11 @@ export function clearStoredMnemonic () {
 /** Derive Ed25519 keys and libp2p peer id from a BIP39 mnemonic. */
 export async function identityFromMnemonic (phrase) {
   const mnemonic = normalizeMnemonic(phrase)
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateBip39Mnemonic(mnemonic, wordlist)) {
     throw new Error('Invalid seed phrase — expected 12 valid BIP39 words.')
   }
 
-  const seed = bip39.mnemonicToSeedSync(mnemonic)
+  const seed = mnemonicToSeedSync(mnemonic)
   const libp2pPrivateKey = await generateKeyPairFromSeed('Ed25519', seed.subarray(0, 32))
   const peerId = await peerIdFromPrivateKey(libp2pPrivateKey)
   const publicKeyBytes = libp2pPrivateKey.publicKey.raw

@@ -1,6 +1,6 @@
 import {
   clearStoredMnemonic,
-  generateMnemonic,
+  generateMnemonicPhrase,
   identityFromMnemonic,
   loadStoredMnemonic,
   signMessage,
@@ -184,8 +184,13 @@ function leaveChat () {
 }
 
 $('generate-mnemonic').addEventListener('click', () => {
-  mnemonicInput.value = generateMnemonic()
-  showError('')
+  try {
+    mnemonicInput.value = generateMnemonicPhrase()
+    showError('')
+  } catch (err) {
+    console.error(err)
+    showError('Could not generate phrase. See browser console.')
+  }
 })
 
 $('join-chat').addEventListener('click', () => {
@@ -222,6 +227,15 @@ messageForm.addEventListener('submit', (e) => {
     statusText.className = 'status warn'
   })
 })
+
+if (location.protocol === 'https:') {
+  const relay = import.meta.env.VITE_RELAY_MULTIADDR ?? ''
+  if (!relay.includes('/wss') && !relay.includes('/tls/')) {
+    console.warn(
+      'GitHub Pages uses HTTPS; ws:// relays are blocked. Use npm run dev locally or configure Kubo WSS.'
+    )
+  }
+}
 
 const stored = loadStoredMnemonic()
 if (stored) {
