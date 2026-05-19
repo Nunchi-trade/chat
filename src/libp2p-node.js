@@ -9,10 +9,16 @@ import { webSockets } from '@libp2p/websockets'
 import { multiaddr } from '@multiformats/multiaddr'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
-import { CHAT_TOPIC, RELAY_MULTIADDRS } from './config.js'
+import {
+  BRIDGE_PEER_ID,
+  CHAT_TOPIC,
+  DISCOVERY_TOPICS,
+  RELAY_MULTIADDRS
+} from './config.js'
 
 /** @type {Map<string, { peerId: string | null, dialError: string | null }>} */
 const relayDialByAddr = new Map()
+let bridgeDialError = null
 
 function peerIdFromRelayMultiaddr (addr) {
   const match = addr.match(/\/p2p\/([^/]+)$/i)
@@ -33,8 +39,69 @@ function hostFromRelayMultiaddr (addr) {
   return 'relay'
 }
 
+function infrastructurePeerIds () {
+  const ids = new Set(
+    RELAY_MULTIADDRS.map(peerIdFromRelayMultiaddr).filter(Boolean)
+  )
+  if (BRIDGE_PEER_ID) {
+    ids.add(BRIDGE_PEER_ID)
+  }
+  return ids
+}
+
+async function dialPubsubBridge (node) {
+  if (!BRIDGE_PEER_ID) {
+    return
+  }
+  bridgeDialError = null
+  for (const relayAddr of RELAY_MULTIADDRS) {
+    const circuitAddr = `${relayAddr}/p2p-circuit/p2p/${BRIDGE_PEER_ID}`
+    try {
+      await node.dial(multiaddr(circuitAddr))
+      return
+    } catch (err) {
+      bridgeDialError = err instanceof Error ? err.message : String(err)
+      console.warn('Failed to dial pubsub bridge via', circuitAddr, err)
+    }
+  }
+}
+
+function dialDiscoveredPeer (node, detail) {
+  if (detail.id.toString() === node.peerId.toString()) {
+    return
+  }
+  const infra = infrastructurePeerIds()
+  if (infra.has(detail.id.toString())) {
+    return
+  }
+  for (const ma of detail.multiaddrs) {
+    void node.dial(ma).catch(() => {})
+  }
+}
+
+async function dialChatSubscribers (node) {
+  const pubsub = node.services.pubsub
+  const self = node.peerId.toString()
+  const infra = infrastructurePeerIds()
+  for (const peerId of pubsub.getSubscribers(CHAT_TOPIC)) {
+    const id = peerId.toString()
+    if (id === self || infra.has(id)) {
+      continue
+    }
+    if (node.getPeers().some((p) => p.toString() === id)) {
+      continue
+    }
+    try {
+      await node.dial(peerId)
+    } catch {
+      // may need webrtc path via discovery
+    }
+  }
+}
+
 export async function createChatNode (libp2pPrivateKey) {
   relayDialByAddr.clear()
+  bridgeDialError = null
 
   const node = await createLibp2p({
     privateKey: libp2pPrivateKey,
@@ -53,7 +120,8 @@ export async function createChatNode (libp2pPrivateKey) {
     },
     peerDiscovery: [
       pubsubPeerDiscovery({
-        interval: 10_000
+        interval: 3_000,
+        topics: DISCOVERY_TOPICS
       })
     ],
     services: {
@@ -62,6 +130,10 @@ export async function createChatNode (libp2pPrivateKey) {
         allowPublishToZeroTopicPeers: true
       })
     }
+  })
+
+  node.addEventListener('peer:discovery', (evt) => {
+    dialDiscoveredPeer(node, evt.detail)
   })
 
   await node.start()
@@ -78,7 +150,13 @@ export async function createChatNode (libp2pPrivateKey) {
     }
   }
 
+  await dialPubsubBridge(node)
+
   await node.services.pubsub.subscribe(CHAT_TOPIC)
+
+  setInterval(() => {
+    void dialChatSubscribers(node)
+  }, 5_000)
 
   return node
 }
@@ -105,6 +183,18 @@ export function getConnectedPeerCount (node) {
   return node.getPeers().length
 }
 
+export function getChatPeerCount (node) {
+  const infra = infrastructurePeerIds()
+  return node.getPeers().filter((p) => !infra.has(p.toString())).length
+}
+
+export function isBridgeConnected (node) {
+  if (!BRIDGE_PEER_ID) {
+    return false
+  }
+  return node.getPeers().some((p) => p.toString() === BRIDGE_PEER_ID)
+}
+
 export function getRelayConfigured () {
   return RELAY_MULTIADDRS.length > 0
 }
@@ -125,6 +215,19 @@ export function getRelayStatuses (node) {
       dialError: dial?.dialError ?? null
     }
   })
+}
+
+export function getBridgeStatuses (node) {
+  if (!BRIDGE_PEER_ID) {
+    return []
+  }
+  const connected = isBridgeConnected(node)
+  return [{
+    peerId: BRIDGE_PEER_ID,
+    host: 'pubsub bridge',
+    connected,
+    dialError: connected ? null : bridgeDialError
+  }]
 }
 
 export function formatRelayLabel (status) {

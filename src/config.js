@@ -1,6 +1,19 @@
 /** Shared gossipsub topic — everyone on this topic is in the same room. */
 export const CHAT_TOPIC = 'nunchi-trade.chat.v1'
 
+/** Gossipsub peer-discovery topics (must include global + app-specific). */
+export const DISCOVERY_TOPICS = [
+  '_peer-discovery._p2p._pubsub',
+  'nunchi-trade._peer-discovery._p2p._pubsub'
+]
+
+/**
+ * Local pubsub bridge (reached via Kubo circuit relay). Kubo does not route gossipsub.
+ * Override with VITE_BRIDGE_PEER_ID at build time.
+ */
+export const BRIDGE_PEER_ID =
+  import.meta.env.VITE_BRIDGE_PEER_ID ?? '12D3KooWDKyy4ctJ8rT39kGXaXFjZYfV48opfP3kREapJQdgZs8v'
+
 /**
  * Kubo circuit-relay via Secure WebSocket (AutoTLS / libp2p.direct).
  * Override with VITE_RELAY_MULTIADDR (comma-separated) at build time.

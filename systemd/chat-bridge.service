@@ -1,0 +1,16 @@
+[Unit]
+Description=Nunchi Chat gossipsub bridge (localhost, via Kubo circuit relay)
+After=network-online.target ipfs.service
+Wants=ipfs.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/chat/bridge
+ExecStart=/usr/bin/node bridge.mjs
+Restart=on-failure
+RestartSec=10
+Environment=HOST=127.0.0.1
+Environment=PORT=4002
+
+[Install]
+WantedBy=multi-user.target

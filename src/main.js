@@ -11,9 +11,11 @@ import {
 import {
   createChatNode,
   formatRelayLabel,
-  getConnectedPeerCount,
+  getBridgeStatuses,
+  getChatPeerCount,
   getRelayConfigured,
   getRelayStatuses,
+  isBridgeConnected,
   onChatMessage,
   publishChatMessage
 } from './libp2p-node.js'
@@ -111,7 +113,7 @@ function updateRelayList () {
     return
   }
 
-  const statuses = getRelayStatuses(node)
+  const statuses = [...getRelayStatuses(node), ...getBridgeStatuses(node)]
   relayList.replaceChildren(
     ...statuses.map((status) => {
       const li = document.createElement('li')
@@ -145,9 +147,10 @@ function updateStatus () {
 
   updateRelayList()
 
-  const peers = getConnectedPeerCount(node)
+  const chatPeers = getChatPeerCount(node)
   const relays = getRelayStatuses(node)
   const anyRelayConnected = relays.some((r) => r.connected)
+  const bridgeOk = isBridgeConnected(node)
   const relay = getRelayConfigured()
 
   if (!relay) {
@@ -159,14 +162,20 @@ function updateStatus () {
       ? 'Relay unreachable — need WSS (Kubo AutoTLS) or check firewall :4001'
       : 'Relay unreachable — check Kubo is running (systemctl status ipfs)'
     statusText.className = 'status warn'
-  } else if (peers === 0) {
-    statusText.textContent = 'Relay connected — waiting for peers…'
-    statusText.className = 'status'
+  } else if (!bridgeOk) {
+    statusText.textContent = 'Pubsub bridge unreachable — systemctl status chat-bridge'
+    statusText.className = 'status warn'
   } else {
-    statusText.textContent = 'Connected'
+    statusText.textContent = 'Chat network ready'
     statusText.className = 'status ok'
   }
-  peerCount.textContent = peers > 0 ? `${peers} peer${peers === 1 ? '' : 's'}` : ''
+
+  const parts = []
+  if (bridgeOk) parts.push('bridge ok')
+  if (chatPeers > 0) {
+    parts.push(`${chatPeers} direct peer${chatPeers === 1 ? '' : 's'}`)
+  }
+  peerCount.textContent = parts.join(' · ')
 }
 
 async function enterChat (mnemonic) {

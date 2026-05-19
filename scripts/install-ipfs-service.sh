@@ -19,6 +19,7 @@ if ! command -v ipfs >/dev/null; then
 fi
 
 install -Dm644 "$UNIT_SRC" "$UNIT_DST"
+install -Dm644 "$AUTOTLS_SRC" "$AUTOTLS_DST"
 systemctl daemon-reload
 systemctl enable ipfs.service
 systemctl restart ipfs.service

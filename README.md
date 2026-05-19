@@ -39,12 +39,16 @@ Open two tabs → **Generate new phrase** → **Join chat**.
 
 ### GitHub Pages + this relay
 
-Set repo variable **`VITE_RELAY_MULTIADDR`** to your public `/ws/p2p/...` multiaddr (from `ipfs id`), then redeploy Pages.
+GitHub Pages is HTTPS, so the relay must use **Secure WebSocket** (Kubo **AutoTLS** → `*.libp2p.direct`).
 
-**HTTPS caveat:** GitHub Pages is served over HTTPS. Browsers block `ws://` from HTTPS pages (mixed content). Options:
+```bash
+./scripts/setup-kubo-relay.sh
+sudo ./scripts/install-ipfs-service.sh   # includes AutoTLS logging
+systemctl restart ipfs
+./scripts/print-relay-multiaddr.sh       # copy /tls/ws multiaddr
+```
 
-- Develop with `npm run dev` (HTTP) and `127.0.0.1` in `VITE_RELAY_MULTIADDR`, or
-- Expose Kubo with **WSS** (TLS on port 4001, reverse proxy, or Kubo AutoTLS), and use a `wss://` multiaddr in `VITE_RELAY_MULTIADDR`.
+Set GitHub variable **`VITE_RELAY_MULTIADDR`** to that value, then redeploy Pages.
 
 ## Fallback: Node relay
 
