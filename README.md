@@ -17,12 +17,14 @@ Live site: **https://nunchi-trade.github.io/chat/**
 # Install (Arch)
 sudo pacman -S kubo
 
-# Configure WebSocket + circuit relay v2
+# Server profile (no mDNS) + WebSocket relay — required on Hetzner/public VPS
 ./scripts/setup-kubo-relay.sh
 
-# Run the node
-ipfs daemon
+# Auto-start on boot (systemd)
+sudo ./scripts/install-ipfs-service.sh
 ```
+
+Check status: `systemctl status ipfs` · logs: `journalctl -u ipfs -f`
 
 Copy the **`/tcp/4001/ws/p2p/...`** address from `ipfs id` into `.env`:
 
