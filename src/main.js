@@ -16,7 +16,6 @@ import {
   getRoomOccupancy,
   getRelayConfigured,
   getRelayStatuses,
-  isBridgeConnected,
   onPubsubMessage,
   publishChatMessage,
   publishPresenceMessage,
@@ -113,10 +112,10 @@ function updateRoomUI () {
     return
   }
   const { count, others } = getRoomOccupancy(identity.peerId.toString())
-  const bridgeOk = node && isBridgeConnected(node)
+  const bridgeOk = node && getBridgeStatuses(node)[0]?.connected
 
   if (!bridgeOk) {
-    roomCountEl.textContent = 'Room: waiting for pubsub bridge…'
+    roomCountEl.textContent = 'Room: waiting for chat relay…'
     roomCountEl.className = 'room-count warn'
     return
   }
@@ -203,7 +202,7 @@ function updateStatus () {
 
   const relays = getRelayStatuses(node)
   const anyRelayConnected = relays.some((r) => r.connected)
-  const bridgeOk = isBridgeConnected(node)
+  const bridgeOk = getBridgeStatuses(node)[0]?.connected
   const relay = getRelayConfigured()
   const room = getRoomOccupancy(identity.peerId.toString())
 
@@ -217,7 +216,7 @@ function updateStatus () {
       : 'Relay unreachable — check Kubo is running (systemctl status ipfs)'
     statusText.className = 'status warn'
   } else if (!bridgeOk) {
-    statusText.textContent = 'Pubsub bridge unreachable — systemctl status chat-bridge'
+    statusText.textContent = 'Chat relay unreachable — systemctl status chat-bridge'
     statusText.className = 'status warn'
   } else if (room.count <= 1) {
     statusText.textContent = 'Chat network ready — waiting for others to join'

@@ -1,18 +1,15 @@
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
-import { floodsub } from '@libp2p/floodsub'
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
-import { pubsubPeerDiscovery } from '@libp2p/pubsub-peer-discovery'
 import { webRTC } from '@libp2p/webrtc'
 import { webSockets } from '@libp2p/websockets'
 import { multiaddr } from '@multiformats/multiaddr'
 import { createLibp2p } from 'libp2p'
-import { fromString, toString } from 'uint8arrays'
+import { ChatRelay } from './chat-relay.js'
 import {
   BRIDGE_PEER_ID,
   CHAT_TOPIC,
-  DISCOVERY_TOPICS,
   PRESENCE_TOPIC,
   PRESENCE_TTL_MS,
   RELAY_MULTIADDRS
@@ -21,6 +18,10 @@ import {
 /** @type {Map<string, { peerId: string | null, dialError: string | null }>} */
 const relayDialByAddr = new Map()
 let bridgeDialError = null
+let relayConnectError = null
+
+/** @type {ChatRelay | null} */
+let chatRelay = null
 
 /** @type {Map<string, { displayName: string, lastSeen: number }>} */
 const roomMembers = new Map()
@@ -122,38 +123,18 @@ async function waitForRelayPeer (node, relayPeerId, timeoutMs = 20_000) {
   throw new Error('Timed out waiting for Kubo relay connection')
 }
 
-async function waitForPubsubPeer (pubsub, peerIdStr, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const found = [...pubsub.peers.keys()].some((p) => p.toString() === peerIdStr)
-    if (found) {
-      return
-    }
-    await waitMs(400)
-  }
-  throw new Error('Pubsub stream to peer not ready')
-}
-
-/** Re-announce topic subscriptions to all floodsub peers (e.g. after bridge connects). */
-function resyncPubsubSubscriptions (pubsub) {
-  for (const topic of pubsub.getTopics()) {
-    pubsub.unsubscribe(topic)
-    pubsub.subscribe(topic)
-  }
-}
-
-async function dialPubsubBridge (node) {
+async function dialBridge (node) {
   if (!BRIDGE_PEER_ID) {
     return
   }
   bridgeDialError = null
-  const pubsub = node.services.pubsub
+  relayConnectError = null
 
   const kuboPeerId = RELAY_MULTIADDRS.map(peerIdFromRelayMultiaddr).find(Boolean)
   if (kuboPeerId) {
     try {
       await waitForRelayPeer(node, kuboPeerId)
-      await waitMs(2000)
+      await waitMs(1500)
     } catch (err) {
       bridgeDialError = err instanceof Error ? err.message : String(err)
       return
@@ -165,13 +146,7 @@ async function dialPubsubBridge (node) {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await node.dial(multiaddr(circuitAddr))
-        try {
-          await waitForPubsubPeer(pubsub, BRIDGE_PEER_ID)
-          resyncPubsubSubscriptions(pubsub)
-        } catch (err) {
-          bridgeDialError = err instanceof Error ? err.message : String(err)
-          console.warn('Bridge libp2p connected but floodsub not ready', err)
-        }
+        bridgeDialError = null
         return
       } catch (err) {
         bridgeDialError = err instanceof Error ? err.message : String(err)
@@ -186,35 +161,41 @@ async function dialPubsubBridge (node) {
   }
 }
 
-function dialDiscoveredPeer (node, detail) {
-  if (detail.id.toString() === node.peerId.toString()) {
+async function connectChatRelay (node) {
+  if (!BRIDGE_PEER_ID) {
     return
   }
-  const infra = infrastructurePeerIds()
-  if (infra.has(detail.id.toString())) {
-    return
-  }
-  for (const ma of detail.multiaddrs) {
-    void node.dial(ma).catch(() => {})
+  chatRelay = new ChatRelay()
+  try {
+    await chatRelay.connect(node, BRIDGE_PEER_ID)
+    relayConnectError = null
+    console.log('[nunchi] chat relay stream open')
+  } catch (err) {
+    relayConnectError = err instanceof Error ? err.message : String(err)
+    console.warn('[nunchi] chat relay stream failed', err)
+    void retryChatRelay(node)
   }
 }
 
-async function dialChatSubscribers (node) {
-  const pubsub = node.services.pubsub
-  const self = node.peerId.toString()
-  const infra = infrastructurePeerIds()
-  for (const peerId of pubsub.getSubscribers(CHAT_TOPIC)) {
-    const id = peerId.toString()
-    if (id === self || infra.has(id)) {
-      continue
+async function retryChatRelay (node) {
+  if (!chatRelay || !BRIDGE_PEER_ID) {
+    return
+  }
+  for (let i = 0; i < 12; i++) {
+    await waitMs(5000)
+    if (chatRelay.connected) {
+      return
     }
-    if (node.getPeers().some((p) => p.toString() === id)) {
+    if (!isBridgeConnected(node)) {
       continue
     }
     try {
-      await node.dial(peerId)
-    } catch {
-      // peer may need circuit/webrtc path
+      await chatRelay.connect(node, BRIDGE_PEER_ID, { timeoutMs: 10_000 })
+      relayConnectError = null
+      console.log('[nunchi] chat relay stream open (retry)')
+      return
+    } catch (err) {
+      relayConnectError = err instanceof Error ? err.message : String(err)
     }
   }
 }
@@ -222,6 +203,8 @@ async function dialChatSubscribers (node) {
 export async function createChatNode (libp2pPrivateKey) {
   relayDialByAddr.clear()
   bridgeDialError = null
+  relayConnectError = null
+  chatRelay = null
   roomMembers.clear()
 
   const node = await createLibp2p({
@@ -239,27 +222,12 @@ export async function createChatNode (libp2pPrivateKey) {
     connectionGater: {
       denyDialMultiaddr: () => false
     },
-    peerDiscovery: [
-      pubsubPeerDiscovery({
-        interval: 3_000,
-        topics: DISCOVERY_TOPICS
-      })
-    ],
     services: {
-      identify: identify(),
-      pubsub: floodsub()
+      identify: identify()
     }
   })
 
-  node.addEventListener('peer:discovery', (evt) => {
-    dialDiscoveredPeer(node, evt.detail)
-  })
-
   await node.start()
-
-  for (const topic of [CHAT_TOPIC, PRESENCE_TOPIC, ...DISCOVERY_TOPICS]) {
-    await node.services.pubsub.subscribe(topic)
-  }
 
   for (const addr of RELAY_MULTIADDRS) {
     const peerId = peerIdFromRelayMultiaddr(addr)
@@ -273,11 +241,8 @@ export async function createChatNode (libp2pPrivateKey) {
     }
   }
 
-  await dialPubsubBridge(node)
-
-  setInterval(() => {
-    void dialChatSubscribers(node)
-  }, 5_000)
+  await dialBridge(node)
+  await connectChatRelay(node)
 
   return node
 }
@@ -298,58 +263,47 @@ export function stopPresenceLoop () {
     presenceTimer = null
   }
   roomMembers.clear()
+  if (chatRelay) {
+    chatRelay = null
+  }
 }
 
-async function publishWithDiagnostics (node, topic, data) {
-  const pubsub = node.services.pubsub
-  const bytes = fromString(JSON.stringify(data))
-  const result = await pubsub.publish(topic, bytes)
-  if (result.recipients.length === 0) {
+function publishViaRelay (topic, data) {
+  if (!chatRelay?.connected) {
     console.warn(
-      `[nunchi] publish on ${topic} reached 0 floodsub peers`,
-      getPubsubDebug(node)
+      `[nunchi] cannot publish on ${topic} — relay stream not open`,
+      getPubsubDebug()
     )
+    throw new Error('Chat relay not connected')
   }
-  return result
+  chatRelay.publish(topic, data)
 }
 
 export function publishChatMessage (node, data) {
-  return publishWithDiagnostics(node, CHAT_TOPIC, data)
+  publishViaRelay(CHAT_TOPIC, data)
 }
 
 export function publishPresenceMessage (node, data) {
-  return publishWithDiagnostics(node, PRESENCE_TOPIC, data)
+  publishViaRelay(PRESENCE_TOPIC, data)
 }
 
 export function getPubsubDebug (node) {
-  const pubsub = node.services.pubsub
-  const peerStr = (p) => p.toString()
   return {
-    libp2pPeers: node.getPeers().map(peerStr),
-    floodsubPeers: [...pubsub.peers.keys()].map(peerStr),
-    topics: pubsub.getTopics(),
-    chatSubscribers: pubsub.getSubscribers(CHAT_TOPIC).map(peerStr),
-    presenceSubscribers: pubsub.getSubscribers(PRESENCE_TOPIC).map(peerStr),
-    bridgeConnected: isBridgeConnected(node),
-    bridgeInFloodsub: BRIDGE_PEER_ID
-      ? [...pubsub.peers.keys()].some((p) => p.toString() === BRIDGE_PEER_ID)
-      : false
+    libp2pPeers: node ? node.getPeers().map((p) => p.toString()) : [],
+    relayStreamOpen: chatRelay?.connected ?? false,
+    bridgeConnected: node ? isBridgeConnected(node) : false,
+    relayConnectError,
+    bridgeDialError
   }
 }
 
-export function onPubsubMessage (node, handler) {
-  node.services.pubsub.addEventListener('message', (event) => {
-    const topic = event.detail.topic
-    if (topic !== CHAT_TOPIC && topic !== PRESENCE_TOPIC) {
-      return
-    }
-    try {
-      const data = JSON.parse(toString(event.detail.data))
-      handler(topic, data)
-    } catch {
-      // ignore malformed
-    }
-  })
+export function onPubsubMessage (_node, handler) {
+  if (!chatRelay) {
+    console.warn('[nunchi] onPubsubMessage called before relay ready')
+    return
+  }
+  chatRelay.on(CHAT_TOPIC, (payload) => handler(CHAT_TOPIC, payload))
+  chatRelay.on(PRESENCE_TOPIC, (payload) => handler(PRESENCE_TOPIC, payload))
 }
 
 export function getConnectedPeerCount (node) {
@@ -366,6 +320,10 @@ export function isBridgeConnected (node) {
     return false
   }
   return node.getPeers().some((p) => p.toString() === BRIDGE_PEER_ID)
+}
+
+export function isRelayStreamOpen () {
+  return chatRelay?.connected ?? false
 }
 
 export function getRelayConfigured () {
@@ -393,12 +351,20 @@ export function getBridgeStatuses (node) {
   if (!BRIDGE_PEER_ID) {
     return []
   }
-  const connected = isBridgeConnected(node)
+  const libp2pUp = isBridgeConnected(node)
+  const streamUp = isRelayStreamOpen()
+  const connected = libp2pUp && streamUp
+  let dialError = null
+  if (!libp2pUp) {
+    dialError = bridgeDialError
+  } else if (!streamUp) {
+    dialError = relayConnectError ?? 'Chat relay stream not open'
+  }
   return [{
     peerId: BRIDGE_PEER_ID,
-    host: 'pubsub bridge',
+    host: 'chat relay',
     connected,
-    dialError: connected ? null : bridgeDialError
+    dialError
   }]
 }
 

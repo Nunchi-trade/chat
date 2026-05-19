@@ -7,12 +7,6 @@ export const PRESENCE_TOPIC = 'nunchi-trade.chat.presence.v1'
 /** How long since last heartbeat counts someone as "in the room". */
 export const PRESENCE_TTL_MS = 45_000
 
-/** Gossipsub peer-discovery topics (must include global + app-specific). */
-export const DISCOVERY_TOPICS = [
-  '_peer-discovery._p2p._pubsub',
-  'nunchi-trade._peer-discovery._p2p._pubsub'
-]
-
 /**
  * Local pubsub bridge (reached via Kubo circuit relay). Kubo does not route gossipsub.
  * Override with VITE_BRIDGE_PEER_ID at build time.

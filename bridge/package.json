@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@libp2p/floodsub": "^11.0.21",
     "@chainsafe/libp2p-noise": "^17.0.0",
     "@chainsafe/libp2p-yamux": "^8.0.0",
     "@libp2p/crypto": "^5.0.0",
