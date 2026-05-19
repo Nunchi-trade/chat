@@ -1,0 +1,18 @@
+[Unit]
+Description=IPFS (Kubo) libp2p daemon
+Documentation=https://docs.ipfs.tech/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=IPFS_PATH=/root/.ipfs
+ExecStart=/usr/bin/ipfs daemon
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=1048576
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Configure and start Kubo (IPFS) as a libp2p circuit relay with WebSocket for the chat app.
+# Configure Kubo (IPFS) as a libp2p circuit relay with WebSocket for the chat app.
+# Applies the server profile (disables mDNS) — recommended on Hetzner/public VPS.
 set -euo pipefail
 
 if ! command -v ipfs >/dev/null; then
@@ -7,8 +8,13 @@ if ! command -v ipfs >/dev/null; then
   exit 1
 fi
 
-if [[ ! -d "${IPFS_PATH:-$HOME/.ipfs}" ]]; then
+export IPFS_PATH="${IPFS_PATH:-$HOME/.ipfs}"
+
+if [[ ! -d "$IPFS_PATH" ]]; then
   ipfs init --profile=server
+else
+  echo "Applying server profile (disables local mDNS discovery)…"
+  ipfs config profile apply server
 fi
 
 ipfs config --json Addresses.Swarm '[
@@ -27,13 +33,18 @@ ipfs config Swarm.Transports.Network.Websocket --json true
 ipfs config --json Swarm.AddrFilters '[]'
 
 echo ""
+echo "Discovery.MDNS.Enabled=$(ipfs config Discovery.MDNS.Enabled)"
+echo ""
 echo "Relay multiaddrs (use /ws for the chat app):"
-ipfs id -f '<addrs>\n' 2>/dev/null | tr ',' '\n' | grep '/ws/' || true
+ipfs id -f '<addrs>\n' 2>/dev/null | tr ',' '\n' | grep '/ws/' || echo "  (start daemon first: systemctl start ipfs)"
 
-if pgrep -x ipfs >/dev/null; then
+if systemctl is-enabled ipfs.service &>/dev/null; then
   echo ""
-  echo "ipfs daemon already running."
+  echo "systemd: ipfs.service is enabled (starts on boot)."
+elif [[ -f /etc/systemd/system/ipfs.service ]]; then
+  echo ""
+  echo "Enable on boot: sudo systemctl enable --now ipfs"
 else
   echo ""
-  echo "Start with: ipfs daemon"
+  echo "Install systemd unit: sudo ./scripts/install-ipfs-service.sh"
 fi
