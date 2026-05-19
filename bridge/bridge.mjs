@@ -1,6 +1,5 @@
 /**
- * Gossipsub bridge on localhost — browsers reach it via Kubo circuit relay.
- * Kubo does not forward custom pubsub topics; this node keeps the chat mesh alive.
+ * Gossipsub bridge — browsers reach it via Kubo circuit relay (needs reservation on Kubo).
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -8,7 +7,9 @@ import { fileURLToPath } from 'node:url'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { gossipsub } from '@chainsafe/libp2p-gossipsub'
+import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
 import { identify } from '@libp2p/identify'
+import { tcp } from '@libp2p/tcp'
 import { webSockets } from '@libp2p/websockets'
 import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys'
 import { peerIdFromPrivateKey } from '@libp2p/peer-id'
@@ -22,6 +23,12 @@ const DISCOVERY_TOPICS = [
 ]
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 4002)
+const KUBO_PEER_ID =
+  process.env.KUBO_PEER_ID ?? '12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS'
+/** Kubo local TCP (plain /ws was removed when AutoTLS enabled). */
+const KUBO_LOCAL_ADDR =
+  process.env.KUBO_LOCAL_ADDR ??
+  `/ip4/127.0.0.1/tcp/4001/p2p/${KUBO_PEER_ID}`
 const KEY_FILE = join(__dirname, 'peer.key')
 const ID_FILE = join(__dirname, 'peer.id')
 
@@ -38,12 +45,22 @@ const privateKey = await loadOrCreateKey()
 const peerId = await peerIdFromPrivateKey(privateKey)
 writeFileSync(ID_FILE, peerId.toString())
 
+/** Listen here so Kubo records a circuit-relay reservation for this peer. */
+const kuboCircuitListen = `${KUBO_LOCAL_ADDR}/p2p-circuit`
+
 const node = await createLibp2p({
   privateKey,
   addresses: {
-    listen: [`/ip4/${HOST}/tcp/${PORT}/ws`]
+    listen: [
+      `/ip4/${HOST}/tcp/${PORT}/ws`,
+      kuboCircuitListen
+    ]
   },
-  transports: [webSockets()],
+  transports: [
+    webSockets(),
+    tcp(),
+    circuitRelayTransport()
+  ],
   connectionEncrypters: [noise()],
   streamMuxers: [yamux()],
   services: {
@@ -56,6 +73,8 @@ const node = await createLibp2p({
 })
 
 await node.start()
+
+console.log('Reserved circuit slot on Kubo via', kuboCircuitListen)
 
 for (const topic of [CHAT_TOPIC, ...DISCOVERY_TOPICS]) {
   await node.services.pubsub.subscribe(topic)

@@ -49,19 +49,54 @@ function infrastructurePeerIds () {
   return ids
 }
 
+async function waitMs (ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForRelayPeer (node, relayPeerId, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (node.getPeers().some((p) => p.toString() === relayPeerId)) {
+      return
+    }
+    await waitMs(500)
+  }
+  throw new Error('Timed out waiting for Kubo relay connection')
+}
+
 async function dialPubsubBridge (node) {
   if (!BRIDGE_PEER_ID) {
     return
   }
   bridgeDialError = null
-  for (const relayAddr of RELAY_MULTIADDRS) {
-    const circuitAddr = `${relayAddr}/p2p-circuit/p2p/${BRIDGE_PEER_ID}`
+
+  const kuboPeerId = RELAY_MULTIADDRS.map(peerIdFromRelayMultiaddr).find(Boolean)
+  if (kuboPeerId) {
     try {
-      await node.dial(multiaddr(circuitAddr))
-      return
+      await waitForRelayPeer(node, kuboPeerId)
+      // Allow browser + bridge circuit reservations to complete on Kubo
+      await waitMs(3000)
     } catch (err) {
       bridgeDialError = err instanceof Error ? err.message : String(err)
-      console.warn('Failed to dial pubsub bridge via', circuitAddr, err)
+      return
+    }
+  }
+
+  for (const relayAddr of RELAY_MULTIADDRS) {
+    const circuitAddr = `${relayAddr}/p2p-circuit/p2p/${BRIDGE_PEER_ID}`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await node.dial(multiaddr(circuitAddr))
+        return
+      } catch (err) {
+        bridgeDialError = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `Bridge dial attempt ${attempt + 1}/5 failed`,
+          circuitAddr,
+          err
+        )
+        await waitMs(2000)
+      }
     }
   }
 }

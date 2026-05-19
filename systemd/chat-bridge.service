@@ -11,6 +11,8 @@ Restart=on-failure
 RestartSec=10
 Environment=HOST=127.0.0.1
 Environment=PORT=4002
+Environment=KUBO_PEER_ID=12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS
+Environment=KUBO_LOCAL_ADDR=/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS
 
 [Install]
 WantedBy=multi-user.target
