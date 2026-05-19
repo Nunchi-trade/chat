@@ -2,18 +2,32 @@
 export const CHAT_TOPIC = 'nunchi-trade.chat.v1'
 
 /**
- * Kubo (IPFS) circuit-relay + WebSocket on this host.
+ * Kubo circuit-relay via Secure WebSocket (AutoTLS / libp2p.direct).
  * Override with VITE_RELAY_MULTIADDR (comma-separated) at build time.
- *
- * Local:  ipfs daemon with /tcp/4001/ws (see scripts/setup-kubo-relay.sh)
- * Public: /ip4/65.109.61.210/tcp/4001/ws/p2p/12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS
- *
- * Note: GitHub Pages is HTTPS — browsers require wss:// unless you use npm run dev.
  */
 const DEFAULT_RELAY =
-  '/ip4/127.0.0.1/tcp/4001/ws/p2p/12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS'
+  '/dns4/65-109-61-210.k51qzi5uqu5dkwksb8xnr82xwgj3dkcamvv8j326fjh3nww1y88ka7rx2lh407.libp2p.direct/tcp/4001/tls/ws/p2p/12D3KooWNZubK6JHJiPmMFXPKXqTax9g9fv7WvrFJ6mgVvhrufpS'
 
-export const RELAY_MULTIADDRS = (import.meta.env.VITE_RELAY_MULTIADDR || DEFAULT_RELAY)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
+function parseRelayList (raw) {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** Prefer TLS/WSS relays when the page is served over HTTPS (e.g. GitHub Pages). */
+function selectRelays (addrs) {
+  if (typeof location !== 'undefined' && location.protocol === 'https:') {
+    const secure = addrs.filter((a) => a.includes('/tls/') || a.includes('/wss'))
+    if (secure.length > 0) {
+      return secure
+    }
+  }
+  return addrs
+}
+
+const configured = parseRelayList(
+  import.meta.env.VITE_RELAY_MULTIADDR || DEFAULT_RELAY
+)
+
+export const RELAY_MULTIADDRS = selectRelays(configured)

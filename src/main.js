@@ -154,7 +154,10 @@ function updateStatus () {
     statusText.textContent = 'No relay configured — deploy relay and rebuild'
     statusText.className = 'status warn'
   } else if (!anyRelayConnected) {
-    statusText.textContent = 'Relay unreachable — check Kubo / firewall'
+    const onHttps = location.protocol === 'https:'
+    statusText.textContent = onHttps
+      ? 'Relay unreachable — need WSS (Kubo AutoTLS) or check firewall :4001'
+      : 'Relay unreachable — check Kubo is running (systemctl status ipfs)'
     statusText.className = 'status warn'
   } else if (peers === 0) {
     statusText.textContent = 'Relay connected — waiting for peers…'

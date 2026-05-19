@@ -2,8 +2,11 @@
 # Install and enable systemd service for Kubo (runs as root, IPFS_PATH=/root/.ipfs).
 set -euo pipefail
 
-UNIT_SRC="$(cd "$(dirname "$0")/.." && pwd)/systemd/ipfs.service"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+UNIT_SRC="$ROOT/systemd/ipfs.service"
 UNIT_DST="/etc/systemd/system/ipfs.service"
+AUTOTLS_SRC="$ROOT/systemd/ipfs.service.d/autotls.conf"
+AUTOTLS_DST="/etc/systemd/system/ipfs.service.d/autotls.conf"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run as root: sudo $0"

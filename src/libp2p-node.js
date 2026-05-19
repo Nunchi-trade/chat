@@ -25,7 +25,11 @@ function hostFromRelayMultiaddr (addr) {
   const ip6 = addr.match(/\/ip6\/([^/]+)/)?.[1]
   if (ip6) return ip6
   const dns = addr.match(/\/dns4\/([^/]+)/)?.[1]
-  if (dns) return dns
+  if (dns) {
+    return dns.includes('.libp2p.direct') ? 'libp2p.direct (WSS)' : dns
+  }
+  const dns6 = addr.match(/\/dns6\/([^/]+)/)?.[1]
+  if (dns6) return 'libp2p.direct (WSS)'
   return 'relay'
 }
 
