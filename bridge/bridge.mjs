@@ -1,6 +1,6 @@
 /**
  * Chat relay hub — browsers reach it via Kubo circuit relay.
- * Uses a custom libp2p protocol (floodsub streams do not open over circuit relay from browsers).
+ * Bridge opens relay streams (browser circuit connections are "limited").
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -35,6 +35,7 @@ const ID_FILE = join(__dirname, 'peer.id')
 
 /** @type {Map<string, { stream: import('@libp2p/interface').Stream, buffer: string }>} */
 const clients = new Map()
+const opening = new Set()
 
 async function loadOrCreateKey () {
   if (existsSync(KEY_FILE)) {
@@ -58,6 +59,71 @@ function broadcast (line, exceptPeerId) {
     } catch (err) {
       console.warn('[bridge] send failed to', peerId, err)
     }
+  }
+}
+
+async function serveRelayStream (remoteId, stream) {
+  if (clients.has(remoteId)) {
+    const existing = clients.get(remoteId)
+    try {
+      existing.stream.abort(new Error('replaced'))
+    } catch {
+      // ignore
+    }
+    clients.delete(remoteId)
+  }
+
+  console.log('[bridge] chat relay stream to', remoteId)
+  clients.set(remoteId, { stream, buffer: '' })
+
+  try {
+    for await (const chunk of stream) {
+      const text = new TextDecoder().decode(
+        chunk.subarray ? chunk.subarray() : chunk
+      )
+      const client = clients.get(remoteId)
+      if (!client) {
+        continue
+      }
+      client.buffer = decodeRelayLines(client.buffer, text, (topic, payload) => {
+        if (topic !== CHAT_TOPIC && topic !== PRESENCE_TOPIC) {
+          return
+        }
+        const fromPeer = payload?.peerId ?? remoteId
+        console.log(`[bridge] ${topic} from ${fromPeer}`)
+        broadcast(encodeRelayLine(topic, payload), remoteId)
+      })
+    }
+  } catch (err) {
+    console.warn('[bridge] stream ended', remoteId, err)
+  } finally {
+    clients.delete(remoteId)
+    console.log('[bridge] chat relay closed', remoteId)
+  }
+}
+
+async function openRelayToPeer (remotePeer) {
+  const remoteId = remotePeer.toString()
+  if (remoteId === peerId.toString()) {
+    return
+  }
+  if (remoteId === KUBO_PEER_ID) {
+    return
+  }
+  if (clients.has(remoteId) || opening.has(remoteId)) {
+    return
+  }
+
+  opening.add(remoteId)
+  try {
+    const stream = await node.dialProtocol(remotePeer, CHAT_RELAY_PROTOCOL, {
+      runOnLimitedConnection: true
+    })
+    void serveRelayStream(remoteId, stream)
+  } catch (err) {
+    console.warn('[bridge] open relay failed', remoteId, err)
+  } finally {
+    opening.delete(remoteId)
   }
 }
 
@@ -89,41 +155,10 @@ const node = await createLibp2p({
 
 await node.start()
 
-await node.handle(CHAT_RELAY_PROTOCOL, async (stream, connection) => {
-  const remote = connection.remotePeer.toString()
-  console.log('[bridge] chat relay stream from', remote)
-  clients.set(remote, { stream, buffer: '' })
-
-  try {
-    for await (const chunk of stream) {
-      const text = new TextDecoder().decode(
-        chunk.subarray ? chunk.subarray() : chunk
-      )
-      const client = clients.get(remote)
-      if (!client) {
-        continue
-      }
-      client.buffer = decodeRelayLines(client.buffer, text, (topic, payload) => {
-        if (topic !== CHAT_TOPIC && topic !== PRESENCE_TOPIC) {
-          return
-        }
-        const fromPeer = payload?.peerId ?? remote
-        console.log(`[bridge] ${topic} from ${fromPeer}`)
-        broadcast(encodeRelayLine(topic, payload), remote)
-      })
-    }
-  } catch (err) {
-    console.warn('[bridge] stream ended', remote, err)
-  } finally {
-    clients.delete(remote)
-    console.log('[bridge] chat relay closed', remote)
-  }
-}, {
-  maxInboundStreams: 256
-})
-
 node.addEventListener('peer:connect', (evt) => {
-  console.log('[bridge] libp2p connect', evt.detail.toString())
+  const remote = evt.detail
+  console.log('[bridge] libp2p connect', remote.toString())
+  void openRelayToPeer(remote)
 })
 
 node.addEventListener('peer:disconnect', (evt) => {

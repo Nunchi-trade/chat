@@ -162,12 +162,11 @@ async function dialBridge (node) {
 }
 
 async function connectChatRelay (node) {
-  if (!BRIDGE_PEER_ID) {
+  if (!BRIDGE_PEER_ID || !chatRelay) {
     return
   }
-  chatRelay = new ChatRelay()
   try {
-    await chatRelay.connect(node, BRIDGE_PEER_ID)
+    await chatRelay.waitForStream({ timeoutMs: 45_000 })
     relayConnectError = null
     console.log('[nunchi] chat relay stream open')
   } catch (err) {
@@ -183,14 +182,14 @@ async function retryChatRelay (node) {
   }
   for (let i = 0; i < 12; i++) {
     await waitMs(5000)
-    if (chatRelay.connected) {
+    if (chatRelay?.connected) {
       return
     }
     if (!isBridgeConnected(node)) {
       continue
     }
     try {
-      await chatRelay.connect(node, BRIDGE_PEER_ID, { timeoutMs: 10_000 })
+      await chatRelay.waitForStream({ timeoutMs: 15_000 })
       relayConnectError = null
       console.log('[nunchi] chat relay stream open (retry)')
       return
@@ -204,8 +203,8 @@ export async function createChatNode (libp2pPrivateKey) {
   relayDialByAddr.clear()
   bridgeDialError = null
   relayConnectError = null
-  chatRelay = null
   roomMembers.clear()
+  chatRelay = new ChatRelay()
 
   const node = await createLibp2p({
     privateKey: libp2pPrivateKey,
@@ -228,6 +227,10 @@ export async function createChatNode (libp2pPrivateKey) {
   })
 
   await node.start()
+
+  if (BRIDGE_PEER_ID) {
+    await chatRelay.installInboundHandler(node, BRIDGE_PEER_ID)
+  }
 
   for (const addr of RELAY_MULTIADDRS) {
     const peerId = peerIdFromRelayMultiaddr(addr)
@@ -263,9 +266,6 @@ export function stopPresenceLoop () {
     presenceTimer = null
   }
   roomMembers.clear()
-  if (chatRelay) {
-    chatRelay = null
-  }
 }
 
 function publishViaRelay (topic, data) {

@@ -6,6 +6,8 @@ import {
   encodeRelayLine
 } from './chat-protocol.js'
 
+const installedHandlers = new WeakMap()
+
 export class ChatRelay {
   constructor () {
     /** @type {import('@libp2p/interface').Stream | null} */
@@ -14,6 +16,8 @@ export class ChatRelay {
     this.listeners = new Map()
     this.buffer = ''
     this.readTask = null
+    /** @type {(() => void) | null} */
+    this.onStreamReady = null
   }
 
   get connected () {
@@ -38,26 +42,64 @@ export class ChatRelay {
     }
   }
 
-  async connect (node, bridgePeerIdStr, { timeoutMs = 30_000 } = {}) {
-    const peerId = peerIdFromString(bridgePeerIdStr)
-    const deadline = Date.now() + timeoutMs
-    let lastError = null
-
-    while (Date.now() < deadline) {
-      try {
-        if (!node.getPeers().some((p) => p.equals(peerId))) {
-          throw new Error('libp2p not connected to bridge')
-        }
-        const stream = await node.dialProtocol(peerId, CHAT_RELAY_PROTOCOL)
-        this.attachStream(stream)
-        return
-      } catch (err) {
-        lastError = err
-        await new Promise((r) => setTimeout(r, 1000))
-      }
+  /**
+   * Circuit-relay connections are "limited" — browsers cannot dialProtocol.
+   * Register an inbound handler; the bridge opens the stream to us.
+   */
+  async installInboundHandler (node, bridgePeerIdStr) {
+    if (installedHandlers.get(node) === bridgePeerIdStr) {
+      return
     }
 
-    throw lastError ?? new Error('Chat relay stream not ready')
+    const bridgeId = peerIdFromString(bridgePeerIdStr)
+
+    await node.handle(CHAT_RELAY_PROTOCOL, (stream, connection) => {
+      if (!connection.remotePeer.equals(bridgeId)) {
+        stream.abort(new Error('unexpected relay peer'))
+        return
+      }
+      console.log('[nunchi] chat relay stream from bridge (inbound)')
+      this.attachStream(stream)
+      this.onStreamReady?.()
+    }, {
+      runOnLimitedConnection: true,
+      maxInboundStreams: 4
+    })
+
+    installedHandlers.set(node, bridgePeerIdStr)
+  }
+
+  /**
+   * Wait until the bridge opens a relay stream (after libp2p is connected to bridge).
+   */
+  async waitForStream ({ timeoutMs = 45_000 } = {}) {
+    if (this.connected) {
+      return
+    }
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.onStreamReady = null
+        reject(new Error('Timed out waiting for chat relay stream from bridge'))
+      }, timeoutMs)
+
+      this.onStreamReady = () => {
+        clearTimeout(timer)
+        this.onStreamReady = null
+        resolve()
+      }
+
+      if (this.connected) {
+        clearTimeout(timer)
+        this.onStreamReady = null
+        resolve()
+      }
+    })
+  }
+
+  async connect (node, bridgePeerIdStr, options) {
+    await this.installInboundHandler(node, bridgePeerIdStr)
+    await this.waitForStream(options)
   }
 
   attachStream (stream) {
