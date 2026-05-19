@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: nunchi-chat-relay
+    runtime: node
+    rootDir: relay
+    buildCommand: npm install
+    startCommand: node relay.mjs
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 8787

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nunchi Chat</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Nunchi Chat</h1>
+        <p class="tagline">libp2p · signed messages · shared room</p>
+      </header>
+
+      <section id="identity-screen" class="panel">
+        <h2>Your identity</h2>
+        <p class="hint">
+          Your 12-word seed phrase is your identity. Keep it secret — anyone with
+          these words can sign messages as you.
+        </p>
+        <label for="mnemonic-input">Seed phrase (12 words)</label>
+        <textarea
+          id="mnemonic-input"
+          rows="3"
+          placeholder="word1 word2 word3 … word12"
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <div class="actions">
+          <button type="button" id="generate-mnemonic">Generate new phrase</button>
+          <button type="button" id="join-chat" class="primary">Join chat</button>
+        </div>
+        <p id="identity-error" class="error" hidden></p>
+      </section>
+
+      <section id="chat-screen" class="panel" hidden>
+        <div class="status-bar">
+          <span id="status-text">Connecting…</span>
+          <span id="peer-count"></span>
+          <button type="button" id="copy-mnemonic" title="Copy seed phrase">Copy seed</button>
+          <button type="button" id="leave-chat">Leave</button>
+        </div>
+        <p class="identity-line">
+          <strong>You:</strong> <code id="display-name"></code>
+        </p>
+        <ul id="messages" aria-live="polite"></ul>
+        <form id="message-form">
+          <input
+            type="text"
+            id="message-input"
+            placeholder="Type a message…"
+            autocomplete="off"
+            maxlength="2000"
+            disabled
+          />
+          <button type="submit" class="primary" disabled>Send</button>
+        </form>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
